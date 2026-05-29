@@ -97,6 +97,60 @@ pidin ar | grep pimmain
 
 ---
 
+## 🧱 Architectural Strategy — Transport-Layer-Only Replacement
+
+### Goal
+
+Replace the original BlackBerry BIS/BES relay transport **at the lowest possible point**, leaving the entire native PIM stack (state machine, outbox queue, retries, folder moves, notifications, conversations, `sync_id`/`refid` correlation) completely untouched.
+
+### Hook Point
+
+`send_PIN_message(self, jsonMsg)` — the boundary between Python-level PIM and the native PIN transport layer (likely `pinutils.so` / C extension / `libbps`).
+
+This is the ideal seam because:
+- the message already has a `sync_id`
+- DB commit is done
+- status is `SENDING`
+- the listener is active
+
+### Why NOT higher in the stack
+
+| Layer | Problem |
+|---|---|
+| REST (`mail_message_new`) | Loses retry logic, outbox queue, status pipeline, folder moves, async handling, dedupe, attachment validation |
+| `message.send_message()` | Account RPC shared across providers; PINProvider does native preprocessing; `sync_id` not yet generated |
+| `message_send_post()` | Validation not complete; send queue not started; cold-boot resends bypassed |
+
+### Implementation Options (recommended order)
+
+1. **LD_PRELOAD hook** — intercept `send_PIN_message` as an ELF symbol (most elegant, very BlackBerry-style)
+2. **Python extension monkey-patch** — replace `pinutils.send_PIN_message` at runtime (simpler to RE, but may be read-only / built-in)
+3. **Socket-layer NOC emulation** — NOT recommended; requires crypto, framing, certs, BIS protocol — unnecessary complexity
+
+### Status Callback Contract
+
+The native `PINMessageStatusListener.add_status_update(refid, status)` must be preserved for Hub UX:
+
+| Status | Code | Meaning |
+|---|---|---|
+| `TEMPORARY_FAILURE` | 2 | transient error → native retry |
+| `ACCEPTED_BY_RELAY` | 5 | accepted → moves to Sent folder |
+| `DELIVERED` | 6 | delivered → UI tick |
+| `PERMANENT_FAILURE` | 1 | fatal → shown in Hub |
+
+Because `sync_id == refid`, the backend only needs to echo the ID back and the entire native correlation system works.
+
+### Resulting Data Flow
+
+```
+REST → message_internal → PINProvider → send_messages()
+                                          → send_PIN_message()   ← HOOK
+                                              → custom backend (websocket/http2/tcp)
+                                              → callback status via PINMessageStatusListener
+```
+
+The Hub, notifications, retries, folders, conversations, and unread counts all remain 100% native. This is *resurrection engineering*: preserve the state machine and UX, replace only the transport.
+
 ## 🔧 Modified Functions in `rest.py`
 
 - `_pin_relay_sync_outgoing_receipts_once()` (~line 587)
