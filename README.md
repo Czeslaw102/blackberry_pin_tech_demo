@@ -97,6 +97,14 @@ pidin ar | grep pimmain
 
 ---
 
+## 🔧 Modified Functions in `rest.py`
+
+- `_pin_relay_sync_outgoing_receipts_once()` (~line 587)
+- `_notify_pin_relay_message_updated()` (~line 300)
+- `mark_pin_relay_sent()` w `RestService` (~line 5083)
+
+---
+
 ## 🧱 Architectural Strategy — Transport-Layer-Only Replacement
 
 ### Goal
@@ -151,8 +159,4 @@ REST → message_internal → PINProvider → send_messages()
 
 The Hub, notifications, retries, folders, conversations, and unread counts all remain 100% native. This is *resurrection engineering*: preserve the state machine and UX, replace only the transport.
 
-## 🔧 Modified Functions in `rest.py`
 
-- `_pin_relay_sync_outgoing_receipts_once()` (~line 587)
-- `_notify_pin_relay_message_updated()` (~line 300)
-- `mark_pin_relay_sent()` w `RestService` (~line 5083)
